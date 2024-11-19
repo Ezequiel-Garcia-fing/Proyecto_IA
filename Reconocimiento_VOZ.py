@@ -15,29 +15,35 @@ def butter_bandpass(lowcut, highcut, fs, order=5):
     b, a = butter(order, [low, high], btype='band')
     return b, a
 
+#Aplicar el filtro pasa banda a los datos de audio.
 def bandpass_filter(data, lowcut, highcut, fs, order=5):
     b, a = butter_bandpass(lowcut, highcut, fs, order=order)
     return lfilter(b, a, data)
 
+#Eliminar silencio en el audio.
 def remove_silence(audio, top_db=20):
     trimmed_audio, _ = librosa.effects.trim(audio, top_db=top_db)
     return trimmed_audio
 
+#Normalizar el audio para que sus valores estén dentro del rango [−1,1].
 def normalize_audio(audio):
     max_val = np.max(np.abs(audio))
     if max_val > 0:
         audio = audio / max_val
     return audio
 
+#Dividir el audio en segmentos iguales.
 def segment_audio(audio, num_segments=10):
     segment_length = len(audio) // num_segments
     return [audio[i * segment_length:(i + 1) * segment_length] for i in range(num_segments)]
 
+#Para obtener un segmento de audio con la longitud deseada (solucion a problemas en la extraccion MFCC).
 def pad_segment(segment, target_length=2048):
     if len(segment) < target_length:
         return np.pad(segment, (0, target_length - len(segment)), 'constant')
     return segment
 
+#Extraer los coeficientes cepstrales de frecuencia Mel (MFCC) seleccionados.
 def extract_mfcc(segment, sr, selected_coeffs=[1, 4, 5], n_fft=512):
     segment = pad_segment(segment, n_fft)
     n_mels = 20
@@ -48,25 +54,22 @@ def extract_mfcc(segment, sr, selected_coeffs=[1, 4, 5], n_fft=512):
     selected_mfcc = mfcc[selected_coeffs, :] if mfcc.shape[0] >= max(selected_coeffs) + 1 else np.zeros(len(selected_coeffs))
     return np.mean(selected_mfcc, axis=1)
 
+#Calcular la tasa de cruces por cero del segmento.
 def extract_zcr(segment, n_fft=512):
     segment = pad_segment(segment, n_fft)
     return np.mean(librosa.feature.zero_crossing_rate(segment, frame_length=n_fft)[0])
 
+#Obtener la amplitud máxima del segmento.
 def extract_amplitude(segment):
     return np.max(np.abs(segment))
 
+#Extraer el contraste espectral del segmento. Util para capturar la riqueza armónica y la variación tonal
 def extract_spectral_contrast(segment, sr, n_fft=512):
     segment = pad_segment(segment, n_fft)
     spectral_contrast = librosa.feature.spectral_contrast(y=segment, sr=sr, n_fft=n_fft)
     return np.mean(spectral_contrast, axis=1)
 
-def extract_features(segment, sr):
-    zcr = extract_zcr(segment)
-    mfcc = extract_mfcc(segment, sr)
-    amplitude = extract_amplitude(segment)
-    spectral_contrast = extract_spectral_contrast(segment, sr)
-    return np.hstack([zcr, mfcc, amplitude, spectral_contrast])
-
+#graba audio en tiempo real desde el micrófono, ajusta su tasa de muestreo y lo guarda en un archivo .wav.
 def record_and_save_audio(filename='grabacion_prueba.wav', duration=3, sample_rate=48000, target_rate=44100):
     """Graba audio en tiempo real y guarda como un archivo .wav con una tasa de muestreo ajustada."""
     print(f"Grabando durante {duration} segundos...")
@@ -78,9 +81,13 @@ def record_and_save_audio(filename='grabacion_prueba.wav', duration=3, sample_ra
     write(filename, target_rate, audio_resampled)
     print(f"Grabación guardada como {filename}")
 
+#calcula la distancia euclidiana
 def euclidean_distance(vec1, vec2):
     return np.sqrt(np.sum((vec1 - vec2) ** 2))
 
+# procesa cadaa archivo de la carpeta base de datos luego los segmenta y 
+# luego llama a extract_features_for_file para Procesa todos los segmentos de un archivo, organizándolos
+#Luego se llama a extract_features para obtener las caracteristicas de segmetnos en especifico
 def process_all_files(folder_path):
     all_features = []
     for filename in os.listdir(folder_path):
@@ -97,7 +104,34 @@ def process_all_files(folder_path):
             except Exception as e:
                 print(f"Error procesando {audio_path}: {e}")
     return all_features
+#Procesa todos los segmentos de un archivo, organizándolos y añadiendo información adicional 
+#como el nombre del archivo y el índice del segmento.
+def extract_features_for_file(segments, sr, filename):
+    features = []
+    for i, segment in enumerate(segments):
+        zcr = extract_zcr(segment)
+        mfcc = extract_mfcc(segment, sr)
+        amplitude = extract_amplitude(segment)
+        spectral_contrast = extract_spectral_contrast(segment, sr)
+        features.append({
+            'Segmento': i + 1,
+            'Archivo': filename,
+            'ZCR': zcr,
+            'MFCC': mfcc,
+            'Amplitud': amplitude,
+            'SpectralContrast': spectral_contrast
+        })
+    return features
 
+#combina diferentes características del segemto para formar un vector de características completo
+def extract_features(segment, sr):
+    zcr = extract_zcr(segment)
+    mfcc = extract_mfcc(segment, sr)
+    amplitude = extract_amplitude(segment)
+    spectral_contrast = extract_spectral_contrast(segment, sr)
+    return np.hstack([zcr, mfcc, amplitude, spectral_contrast])
+
+#diccionario especifica qué segmentos de cada palabra serán seleccionados para el análisis.
 selected_segments_per_word = {
     'camote': [6],
     'berenjena': [6],
@@ -105,6 +139,8 @@ selected_segments_per_word = {
     'papa': [2]
 }
 
+#Esta función filtra y organiza los datos de características extraídas, 
+# seleccionando solo los segmentos relevantes de acuerdo con el diccionario. Devuelve los datos en un formato adecuado para el análisis con PCA.
 def prepare_data_for_pca(features):
     data, labels, categories = [], [], []
     for feature in features:
@@ -116,6 +152,7 @@ def prepare_data_for_pca(features):
                 categories.append(category)
     return np.array(data), labels, categories
 
+#útil para entender cómo se distribuyen los datos en el espacio PCA y si las clases son distinguibles.
 def plot_additional_pca_3d(features, pca_result, labels, categories):
     colors = {'berenjena': 'yellow', 'camote': 'blue', 'zanahoria': 'purple', 'papa': 'green'}
     fig = plt.figure(figsize=(10, 6))
@@ -134,23 +171,9 @@ def plot_additional_pca_3d(features, pca_result, labels, categories):
     plt.grid(True)
     plt.show()
 
-def extract_features_for_file(segments, sr, filename):
-    features = []
-    for i, segment in enumerate(segments):
-        zcr = extract_zcr(segment)
-        mfcc = extract_mfcc(segment, sr)
-        amplitude = extract_amplitude(segment)
-        spectral_contrast = extract_spectral_contrast(segment, sr)
-        features.append({
-            'Segmento': i + 1,
-            'Archivo': filename,
-            'ZCR': zcr,
-            'MFCC': mfcc,
-            'Amplitud': amplitude,
-            'SpectralContrast': spectral_contrast
-        })
-    return features
-
+#Filtra los segmentos relevantes según su categoría y número.
+#Crea vectores de características combinadas (ZCR, MFCC, amplitud, contraste espectral).
+#Organiza los vectores en un diccionario estructurado por clases, listo para usarse en un modelo KNN.
 def prepare_knn_data(features):
     training_features = {'camote': [], 'berenjena': [], 'zanahoria': [], 'papa': []}
     for feature in features:
@@ -162,7 +185,7 @@ def prepare_knn_data(features):
             training_features[category].append(feature_vector)
     return training_features
 
-def recognize_word_with_updated_strategy(audio_path, training_features, target_rate=44100, umbral_zanahoria=70):
+def KNN_casero(audio_path, training_features, target_rate=44100, umbral_zanahoria=70):
     audio, sr = librosa.load(audio_path, sr=target_rate)
     
     filtered_audio = bandpass_filter(audio, 100, 6000, sr)
@@ -212,5 +235,5 @@ pca_result = pca.fit_transform(data)
 #plot_additional_pca_3d(all_features, pca_result, labels, categories)
 training_features = prepare_knn_data(all_features)
 record_and_save_audio('grabacion_prueba.wav')
-recognize_word_with_updated_strategy('grabacion_prueba.wav', training_features)
+KNN_casero('grabacion_prueba.wav', training_features)
 

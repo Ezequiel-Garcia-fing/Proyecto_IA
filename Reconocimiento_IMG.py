@@ -8,6 +8,7 @@ from mpl_toolkits.mplot3d import Axes3D
 from skimage.feature import local_binary_pattern
 from sklearn.preprocessing import StandardScaler
 
+#Calcula la extensión de un contorno,proporción entre el área del contorno y el área del rectángulo que lo encierra.
 def extract_extent(contour):
     """Calcula la extensión del contorno."""
     x, y, w, h = cv2.boundingRect(contour)
@@ -17,16 +18,19 @@ def extract_extent(contour):
         return 0
     return area / rect_area
 
+#Calcula la media del canal de tonalidad (Hue) en el espacio de color HSV.
 def extract_hue_feature(image):
     hsv_image = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
     hue_channel = hsv_image[:, :, 0]
     return np.mean(hue_channel)
 
+#Extrae una característica relacionada con la textura de la imagen utilizando el patrón binario local (LBP).
 def extract_texture_feature(image):
     gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     lbp = local_binary_pattern(gray_image, P=8, R=1, method='uniform')
     return np.mean(lbp)
 
+#Calcula los primeros cuatro momentos invariantes de Hu a partir de un contorno.
 def extract_hu_moments(contour):
     """Calcula los primeros cuatro momentos de Hu a partir del contorno."""
     moments = cv2.moments(contour)
@@ -34,6 +38,8 @@ def extract_hu_moments(contour):
     # Devolver los primeros cuatro momentos de Hu
     return hu_moments[:4]  # Retornamos Hu_1, Hu_2, Hu_3 y Hu_4
 
+#Esta función calcula la circularidad de un contorno, que es una medida de cuán cerca está un contorno de ser un círculo perfecto.
+#=1 circulo perfceto, menor a uno forma irregular o alargada
 def extract_circularity(contour):
     area = cv2.contourArea(contour)
     perimeter = cv2.arcLength(contour, True)
@@ -42,6 +48,9 @@ def extract_circularity(contour):
     circularity = (4 * np.pi * area) / (perimeter ** 2)
     return circularity
 
+#preprocesamiento y extraccion de caracteristicas de una sola imagenes para su posterior clasficacion.
+#preprocess_and_extract_features realiza el preprocesameinto y extraccion de imagenes (individuales)
+# que load_images_and_extract_features_with_normalization le va pasando y a su vez esta ultima funcion organiza los datos que le llegan de preprocess_and_extract_features?
 def preprocess_and_extract_features(image_path, show_plots=False):
     """Preprocesa la imagen, detecta el contorno más grande y extrae características."""
     image = cv2.imread(image_path)
@@ -132,6 +141,7 @@ def load_images_and_extract_features_with_normalization(folder_path, save_csv=Fa
     
     return df, scaler
 
+# Visualización de la separación de clases y centroides:
 def plot_pca_3d(dataframe, centroids=None):
     """Visualiza los datos y los centroides en un espacio PCA 3D."""
     fig = plt.figure(figsize=(12, 10))
@@ -155,7 +165,8 @@ def plot_pca_3d(dataframe, centroids=None):
     plt.show()
 
 
-
+#Se utiliza al inicio del algoritmo K-Means para calcular las coordenadas iniciales de los centroides.
+# Calcula el promedio de los puntos de cada etiqueta en el espacio PCA y los utiliza como los centroides iniciales.
 def initialize_centroids_pca_labels(dataframe, n_clusters=4):
     """
     Inicializa los centroides utilizando las etiquetas en el espacio PCA.
@@ -181,8 +192,8 @@ def initialize_centroids_pca_labels(dataframe, n_clusters=4):
     return np.array(centroids), transformed_features, pca
 
 
-
-
+#Las etiquetas originales solo se usan al principio (si las tienes) para una inicialización guiada.
+#Durante las iteraciones, el algoritmo es no supervisado, lo que significa que no tiene acceso a las etiquetas originales y trabaja únicamente con las etiquetas generadas basadas en las distancias a los centroides.
 def adjust_centroids_with_labels(data, labels, n_clusters=4):
     """Recalcula los centroides basados en las asignaciones de clusters."""
     new_centroids = []
@@ -196,6 +207,8 @@ def adjust_centroids_with_labels(data, labels, n_clusters=4):
             new_centroids.append(np.zeros(data.shape[1]))
     return np.array(new_centroids)
 
+#La asignación de puntos a clústeres en función de la distancia a los centroides.
+#El control de iteraciones y la verificación de convergencia.
 def kmeans_custom_pca_adjusted(data, initial_centroids, max_iterations=100):
     """K-means utilizando centroides inicializados en el espacio PCA."""
     centroids = initial_centroids
@@ -203,27 +216,22 @@ def kmeans_custom_pca_adjusted(data, initial_centroids, max_iterations=100):
         # Calcular distancias a los centroides en el espacio PCA
         distances = np.linalg.norm(data[:, None] - centroids, axis=2)
         labels = np.argmin(distances, axis=1)
-        
-        # Calcular nuevos centroides basados en las asignaciones
-        new_centroids = np.array([data[labels == i].mean(axis=0) if np.any(labels == i) else centroids[i] 
-                                  for i in range(len(centroids))])
-        
+
+        # Recalcular los centroides usando adjust_centroids_with_labels
+        new_centroids = adjust_centroids_with_labels(data, labels, n_clusters=len(centroids))
+
         # Verificar si los centroides han cambiado
         if np.allclose(centroids, new_centroids):
             break
         centroids = new_centroids
-    
+
     return centroids, labels
 
-
-
-def classify_image(features, centroids):
-    distances = np.linalg.norm(centroids - features, axis=1)
-    return np.argmin(distances)
-
+#clasificar imágenes almacenadas en una carpeta de pruebas (pruebas_img) utilizando un modelo entrenado basado en PCA y centroides calculados por K-Means.
+# las caracteristicas obtenidas se reducen al espacio pca porque las caracteristicas del entrenamiento tambien estan reducidas  
 def recognize_images_pca(centroids, pca, scaler, label_map, show_plots=False):
     """
-    Clasifica las imágenes en la carpeta 'pruebas_img' utilizando los centroides calculados en el espacio PCA.
+    Clasifica las imágenes en la carpeta 'pruebas_img' utilizando los ultimos centroides 
     """
     test_folder = 'pruebas_img'
     test_files = [f for f in os.listdir(test_folder) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
@@ -260,35 +268,6 @@ def recognize_images_pca(centroids, pca, scaler, label_map, show_plots=False):
     print("\nTabla resumen de predicciones:")
     print(df_results)
     return df_results
-
-
-
-
-def visualize_kmeans_clusters(dataframe, centroids, labels):
-    pca = PCA(n_components=2)
-    features = dataframe[['hu_1', 'hu_2', 'hu_3', 'hu_4', 'circularity', 'texture', 'hue', 'extent']].values
-    transformed = pca.fit_transform(features)
-    
-    dataframe['PCA1'] = transformed[:, 0]
-    dataframe['PCA2'] = transformed[:, 1]
-    
-    plt.figure(figsize=(12, 8))
-    
-    # Visualizar los puntos con colores según las etiquetas reales
-    for label in dataframe['label'].unique():
-        subset = dataframe[dataframe['label'] == label]
-        plt.scatter(subset['PCA1'], subset['PCA2'], label=label, alpha=0.6)
-    
-    # Añadir los centroides al gráfico
-    centroids_transformed = pca.transform(centroids)
-    plt.scatter(centroids_transformed[:, 0], centroids_transformed[:, 1], c='red', marker='X', s=200, label='Centroids')
-    
-    plt.title('K-means Clusters with Centroids')
-    plt.xlabel('PCA Component 1')
-    plt.ylabel('PCA Component 2')
-    plt.legend()
-    plt.grid(True)
-    plt.show()
 
 
 # Cargar datos de entrenamiento y normalizarlos
